@@ -1,0 +1,279 @@
+#!/bin/bash
+# Author: Vito Cucek (vito.cucek@gmail.com)
+
+# Print help
+if [[ $1 = "--help" ]]; then
+    echo 'List browser'
+    echo 'Author: Vito Cucek'
+    echo ' '
+    echo 'Usage:'
+    echo ' lb [-l]'
+    echo ' '
+    echo 'Options:'
+    echo ' -l : number of lines'
+    echo ' '
+    echo 'Movements:'
+    echo ' Keys     : up, down arrows'
+    echo ' Return   : Confirm selection'
+    echo ' C^u      : Move up 10 lines'
+    echo ' C^d      : Move down 10 lines'
+    echo ' '
+    exit 0
+fi
+
+## Terminal settings ###########################################################
+
+function _print_out {
+    printf $@ > /dev/stdout
+}
+
+function _print_tty {
+    printf $@ > /dev/tty
+}
+
+SAVEIFS=""
+function terminal_setup {
+    # set array separator
+    SAVEIFS=$IFS
+    FB_IFS=$(echo -en "\n\b")
+    IFS=$FB_IFS
+}
+
+function terminal_fetch {
+    IFS=$' '
+    IFS=$FB_IFS
+}
+
+function terminal_restore {
+    # restore array separator
+    IFS=$SAVEIFS
+}
+
+## Constants ###################################################################
+
+FB_PATH="$0"
+FB_PID="$$"
+
+# Bottom/top padding when scrolling
+PADDING=4
+# Visible number of lines
+HEIGHT=20
+# Start in full screen mode
+FULLSCREEN=false
+
+# colors
+col_cursor=$'\e[1;31m'
+col_select_bg=$'\e[1;103m'
+col_select_fg=$'\e[1;30m'
+col_nav=$'\e[1;32m'
+
+col_link=$'\e[1;96m'
+col_exec=$'\e[1;32m'
+col_socket=$'\e[1;95m'
+col_char=$'\e[1;93m'
+col_folder=$'\e[1;94m'
+col_none=$'\e[0m'
+
+## Parameters ##################################################################
+
+# Draw context variables
+fullscreen_mode=$FULLSCREEN
+
+# Variable representing cursor line index
+dc_cursor=0
+# Variable representing top visible line index
+dc_begin=0
+# Variable representing number of visible lines
+dc_height=$HEIGHT
+# lines to draw
+dc_lines=()
+
+# Current list variables
+lines_input=()
+lines=()
+current_line=
+
+## Rendering Functions #########################################################
+
+function _render_row {
+    _print_tty "$3$2%s$col_none\033[K\n" "$1"
+    ((dc_canvas_height++))
+}
+
+function _render {
+
+    local lines_size=${#lines[@]}
+
+    dc_canvas_height=0
+    dc_height=$HEIGHT
+
+    # Clamp cursor
+    dc_cursor=$(( $dc_cursor < 0 ? 0 : $dc_cursor ))
+    dc_cursor=$(( $dc_cursor > $lines_size-1 ? $lines_size-1 : $dc_cursor ))
+
+    # Print header and navigation bar
+    _render_row "---------------------------------------------------------------------------------------"
+    _render_row ""
+    _render_row "---------------------------------------------------------------------------------------"
+
+    dc_begin=$(( $dc_cursor - $dc_begin < $PADDING ? $dc_cursor - $PADDING : $dc_begin ))
+    dc_begin=$(( $dc_begin < 0 ? 0 : $dc_begin ))
+    dc_begin=$(( $dc_cursor - $dc_begin + $PADDING > $dc_height ? $dc_cursor + $PADDING - $dc_height : $dc_begin ))
+    dc_begin=$(( $dc_begin < 0 ? 0 : $dc_begin ))
+
+    for (( i=0; i<$dc_height; i++ )); do
+        line_index=$((dc_begin + i))
+
+        line=${lines[line_index]}
+        line_draw=${dc_lines[line_index]}
+
+        color_fg=""
+        color_bg=""
+
+        # Check if current dc_cursor
+        if [ $line_index -eq $dc_cursor ]; then
+            current_line=$line
+            color_fg=$col_cursor
+        fi
+        _render_row ${line_draw:-$line} $color_fg $color_bg
+    done
+
+    _render_row "---------------------------------------------------------------------------------------"
+
+    # set position to beginning
+    _print_tty "\e[2000D"
+    _print_tty "\e[%sA" $dc_canvas_height
+}
+
+function render_clear {
+    _print_tty "\e[J"
+}
+
+## Init/Exit/Run Functions #################################################
+
+function _initialize() {
+
+    #configure terminal
+    terminal_setup
+    terminal_fetch
+
+    # Read input from pipe
+    STD_IN=$(</dev/stdin)
+    lines=($STD_IN)
+    lines_input=($STD_IN)
+    dc_lines=($STD_IN)
+
+    # Read input from tty
+    exec 0</dev/tty
+    # Print to tty
+    #exec 1>/dev/tty
+
+    # register signal hooks
+    trap _on_stop TSTP
+    trap _on_terminate EXIT
+    trap 'terminal_fetch; render' WINCH
+}
+
+## Terminal hooks ##########################################################
+
+function _on_terminate(){
+    render_clear
+    terminal_restore
+    exit 0
+}
+
+function _on_stop(){
+    render_clear
+    terminal_restore
+    kill -s SIGSTOP $$
+}
+
+function _exit(){
+    render_clear
+    terminal_restore
+    exit 0
+}
+
+## Program execution ###########################################################
+
+# Initialize terminal, cache, hooks
+_initialize
+_render
+
+while :
+do
+    # Move one line down and clear
+    _print_tty "\033[1B"
+    _print_tty "\033[2K"
+    # Draw input label
+    _print_tty "Search: $input_text"
+
+    # read key
+    k1=
+    k2=
+    k3=
+    read -sn1 k1
+    if [[ $k1 == $'\e' || $k1 == $'\x' ]]; then
+        read -sn1 -t 0.0001 k2
+        read -sn1 -t 0.0001 k3
+    fi
+    key=${k1}${k2}${k3}
+
+    # Return
+    if [[ $key = '' ]]; then
+        key="consumed"
+
+        # Move one line up to beginning and clear
+        _print_tty "\e[2000D"
+        _print_tty "\e[1A"
+        _print_tty "\033[2K"
+
+        # Print selected line
+        _print_out "${lines[$dc_cursor]}"
+        _exit
+    # Backspace
+    elif [[ $input_text != '' && $key = $'\x7f' ]]; then
+        input_text=${input_text:0:-1}
+        lines=($(_print_tty "${lines_input[*]}" | grep "$input_text"))
+        dc_cursor=0
+    elif [[ $k1 != $'\e' && $k1 != $'\x' ]]; then
+        input_text=$input_text$key
+        lines=($(_print_tty "${lines_input[*]}" | grep "$input_text"))
+        dc_cursor=0
+    else
+        # up/down
+        if [[ $key = $'\e[A' ]]; then 
+            dc_cursor=$((dc_cursor - 1))
+        fi
+        if [[ $key = $'\e[B' ]]; then 
+            dc_cursor=$((dc_cursor + 1))
+        fi
+        # 10 up/down
+        if [[ $key = $'\x15' ]]; then
+            dc_cursor=$((dc_cursor - 10))
+        fi
+        if [[ $key = $'\x04' ]]; then
+            dc_cursor=$((dc_cursor + 10))
+        fi
+    fi
+
+    # Exit application
+    if [[ $key = $'\x1b' ]]; then
+        # move one line up to beginning and clear
+        _print_tty "\e[2000D"
+        _print_tty "\e[1A"
+        _print_tty "\033[2K"
+        _exit
+    fi
+
+    dc_lines=()
+
+    # move one line up to beginning
+    _print_tty "\e[2000D"
+    _print_tty "\e[1A"
+
+    _render
+done
+
+terminal_restore
+exit 0
