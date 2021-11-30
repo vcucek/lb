@@ -234,11 +234,11 @@ do
     # Backspace
     elif [[ $input_text != '' && $key = $'\x7f' ]]; then
         input_text=${input_text:0:-1}
-        lines=($(_print_tty "${lines_input[*]}" | grep "$input_text"))
+        lines=($(printf "${lines_input[*]}" | grep "$input_text"))
         dc_cursor=0
     elif [[ $k1 != $'\e' && $k1 != $'\x' ]]; then
         input_text=$input_text$key
-        lines=($(_print_tty "${lines_input[*]}" | grep "$input_text"))
+        lines=($(printf "${lines_input[*]}" | grep "$input_text"))
         dc_cursor=0
     else
         # up/down
