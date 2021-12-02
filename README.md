@@ -34,12 +34,7 @@ systemctl status $(systemctl list-units-files | lb | awk '{ print $1 }')
 eval $(cat ~/.bash_history | lb -l 30)
 ```
 
-5. Browse history and execute:
-```bash
-eval $(cat ~/.bash_history | lb -l 30)
-```
-
-6. SSH to host specified in ~/.ssh/config
+5. SSH to host specified in ~/.ssh/config
 ```bash
  ssh $(grep "^host" ~/.ssh/config | awk '{ print $2 }' | lb)
 ```
