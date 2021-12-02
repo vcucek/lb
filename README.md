@@ -2,8 +2,8 @@
 Terminal application for displaying selectable menu based on lines from the standard input.
 User can pipe arbitrary lines to **lb** for making a selectable menu with quick search capability.
 
-List browser provides a similar functionality as dmenu, except that it displays selection in the terminal.
-Consequently **lb** does not depend on X or any other graphical environment.
+List browser provides a similar functionality to the suckless dmenu, except that it is written in bash and displays selection menu in the terminal.
+Consequently **lb** does not depend on X or any other graphical environment other then tty.
 
 ## Install
 
