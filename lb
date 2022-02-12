@@ -29,6 +29,10 @@ function _print_out {
     printf '%s' "$@" > /dev/stdout
 }
 
+function _print_out_nl {
+    printf '%s\n' "$@" > /dev/stdout
+}
+
 function _print_tty {
     printf "$@" > /dev/tty
 }
@@ -42,6 +46,8 @@ function terminal_setup {
     
     # disable line wrapping 
     _print_tty '\e[?7l'
+    # Hide the cursor
+    _print_tty "\e[?25l"
 }
 
 function terminal_fetch {
@@ -55,6 +61,8 @@ function terminal_restore {
 
     # restore line wrapping 
     _print_tty '\e[?7h'
+    # Show the cursor
+    _print_tty "\e[?25h"
 }
 
 ## Constants ###################################################################
@@ -66,15 +74,8 @@ HEIGHT=20
 
 # colors
 col_cursor=$'\e[1;31m'
-col_select_bg=$'\e[1;103m'
-col_select_fg=$'\e[1;30m'
-col_nav=$'\e[1;32m'
-
-col_link=$'\e[1;96m'
-col_exec=$'\e[1;32m'
-col_socket=$'\e[1;95m'
-col_char=$'\e[1;93m'
-col_folder=$'\e[1;94m'
+col_mark_bg=$'\e[10;103m'
+col_mark_fg=$'\e[10;30m'
 col_none=$'\e[0m'
 
 ## Parameters ##################################################################
@@ -92,6 +93,25 @@ dc_lines=()
 lines_input=()
 lines=()
 current_line=
+
+declare -A lines_marked
+
+## Functions ###################################################################
+
+function _marks_toggle {
+    # Check if selected
+    if [ -n "$current_line" ]; then
+        if [ ! -z "${lines_marked[$current_line]}" ]; then
+            lines_marked[$current_line]=
+        else
+            lines_marked[$current_line]=true
+        fi
+    fi
+}
+
+function _marks_args {
+    printf "\'%s\' " "${!lines_marked[@]}"
+}
 
 ## Rendering Functions #########################################################
 
@@ -111,7 +131,7 @@ function _render {
     dc_cursor=$(( $dc_cursor > $lines_size-1 ? $lines_size-1 : $dc_cursor ))
 
     # Print header and navigation bar
-    _render_row ""
+    _render_row $1 
     _render_row "---------------------------------------------------------------------------------------"
 
     dc_begin=$(( $dc_cursor - $dc_begin < $PADDING ? $dc_cursor - $PADDING : $dc_begin ))
@@ -128,6 +148,14 @@ function _render {
         color_fg=""
         color_bg=""
 
+        # Check if marked
+        if [ ! -z "$line" ]; then
+            local line_marked=${lines_marked[$line]}
+            if [ ! -z "$line_marked" ]; then
+                color_bg=$col_mark_bg
+                color_fg=$col_mark_fg
+            fi
+        fi
         # Check if current dc_cursor
         if [ $line_index -eq $dc_cursor ]; then
             current_line=$line
@@ -208,40 +236,51 @@ if [[ $1 = "-l" ]]; then
     dc_height=${2:-$HEIGHT};
 fi
 
-_render
+_render "(filter): $input_text"
 
 while :
 do
-    # Move to beginning and clear
-    _print_tty "\e[2000D"
-    _print_tty "\033[2K"
-    # Draw input label
-    _print_tty "(filter): $input_text"
-
     # read key
     k1=
     k2=
     k3=
+    k4=
     read -sn1 k1
     if [[ $k1 == $'\e' || $k1 == $'\x' ]]; then
         read -sn1 -t 0.0001 k2
         read -sn1 -t 0.0001 k3
+        read -sn1 -t 0.0001 k4
     fi
-    key=${k1}${k2}${k3}
+    key=${k1}${k2}${k3}${k4}
 
     #printf '%s' "$key" | hexdump -C
 
     # Return
-    if [[ $key = '' ]]; then
+    if [[ $key = $'' ]]; then
         key="consumed"
 
         # Move to beginning and clear
         _print_tty "\e[2000D"
         _print_tty "\033[2K"
 
-        # Print selected line
-        _print_out "${lines[$dc_cursor]}"
+        if [ ${#lines_marked[@]} -ne 0 ]; then
+            # Output marked lines
+            for i in "${!lines_marked[@]}"
+            do
+                _print_out_nl "$i"
+                _print_tty "\e[2000D"
+                _print_tty "\033[2K"
+            done
+        else
+            # Output current line
+            _print_out_nl "${lines[$dc_cursor]}"
+        fi
         _exit
+    # Mark line with insert key
+    elif [[ $key = $'\e[2~' ]]; then
+        _marks_toggle 
+    elif [[ $key = $'\e[4h' ]]; then
+        _marks_toggle 
     # Backspace
     elif [[ $key = $'\x7f' ]]; then
         if [[ $input_text != '' ]]; then
@@ -269,6 +308,8 @@ do
         _print_tty "\e[2000D"
         _print_tty "\033[2K"
         _exit
+    elif [[ $k1 = $'\e' ]]; then
+        continue;
     else
         input_text=$input_text$key
         lines=($(printf '%s' "${lines_input[*]}" | grep -s "$input_text"))
@@ -279,7 +320,7 @@ do
 
     # Move to beginning
     _print_tty "\e[2000D"
-    _render
+    _render "(filter): $input_text"
 done
 
 terminal_restore
